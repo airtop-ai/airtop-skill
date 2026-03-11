@@ -1,7 +1,12 @@
 ---
 name: airtop-agents
 description: List, run, and monitor Airtop agents. Use when asked to run an Airtop agent, check agent status, list agents, or invoke a webhook agent.
-allowed-tools: Bash, Read, Write
+license: MIT
+compatibility: Requires curl, jq, and a shell environment. Requires an Airtop API key from https://portal.airtop.ai/api-keys.
+allowed-tools: Bash Read Write
+metadata:
+  author: airtop-ai
+  version: "1.0"
 ---
 
 # Airtop Agents Skill
@@ -24,7 +29,7 @@ API_KEY="${AIRTOP_API_KEY}"
 
 If loading from `.env`:
 ```bash
-API_KEY=$(grep AIRTOP_API_KEY /path/to/skill/.env | cut -d= -f2-)
+API_KEY=$(grep AIRTOP_API_KEY "$(dirname "$SKILL_PATH")/.env" | cut -d= -f2-)
 ```
 
 ## Base URL
@@ -40,7 +45,7 @@ Parse `$ARGUMENTS` as follows:
 ```
 list [--name <filter>]              List agents
 run <agent-name-or-id> [--vars {}]  Run an agent with optional config variables
-status <invocationId>               Check invocation status
+status <agentId> <invocationId>     Check invocation status
 cancel <agentId> <invocationId>     Cancel a running invocation
 history <agentId>                   View recent invocations
 ```
@@ -53,8 +58,10 @@ If `$ARGUMENTS` is empty or unrecognized, show the usage summary above and ask t
 
 ```bash
 curl -s -H "Authorization: Bearer $API_KEY" \
-  "https://api.airtop.ai/api/v2/agents?limit=25&sortBy=lastRun&sortOrder=desc"
+  "https://api.airtop.ai/api/v2/agents?limit=25&sortBy=lastRun&sortOrder=desc&createdByMe=true"
 ```
+
+Always include `createdByMe=true` to show only agents owned by the current user (not the entire organization).
 
 Optional query parameters to append:
 - `&name=<filter>` — case-insensitive partial match (use when `--name` is provided)
@@ -83,14 +90,36 @@ If the argument looks like a UUID, use it directly as the agent ID. Otherwise, s
 
 ```bash
 curl -s -H "Authorization: Bearer $API_KEY" \
-  "https://api.airtop.ai/api/v2/agents?name=$(echo '<agent-name>' | jq -sRr @uri)"
+  "https://api.airtop.ai/api/v2/agents?name=$(printf '%s' '<agent-name>' | jq -sRr @uri)&createdByMe=true"
 ```
 
-- If exactly one agent matches, use it.
-- If multiple agents match, display them in a table and ask the user to pick one.
+- If exactly one agent matches, use it (but still validate it in Step 2).
+- If multiple agents match, prefer enabled and published agents over disabled or draft-only ones. If there is still ambiguity, display them in a table (with Enabled and Published status columns) and ask the user to pick one.
 - If no agents match, tell the user no agent was found and suggest running `list`.
 
-**Step 2 — Get the agent's webhook.**
+**Step 2 — Validate the agent is runnable.**
+
+Fetch the full agent details (already available from step 1 if resolved by name, or fetch now):
+
+```bash
+curl -s -H "Authorization: Bearer $API_KEY" \
+  "https://api.airtop.ai/api/v2/agents/<agentId>"
+```
+
+Check the following before proceeding:
+
+- **Disabled agent** (`enabled` is `false`): Tell the user the agent is disabled and cannot be run. Suggest they enable it in the Airtop portal.
+- **Draft-only agent** (`hasDraft` is `true` AND `publishedVersion` is absent): Tell the user the agent has only a draft version and has never been published. It must be published in the Airtop portal before it can be invoked via webhook.
+- **Published agent with draft** (`hasDraft` is `true` AND `publishedVersion` is present): The agent is runnable. Note to the user that the agent has unpublished draft changes, and the published version will be used. Use the `publishedVersion` value for the version parameter.
+- **Published agent** (`publishedVersion` is present, `hasDraft` is `false`): The agent is runnable. Use the `publishedVersion` value for the version parameter.
+
+**Step 3 — Check required configVars.**
+
+The agent details response includes a `versionData.configVarsSchema` field. Inspect it for `required` properties. If the user has not provided values for required configVars via `--vars`, prompt them for the missing values before invoking.
+
+Display the required and optional parameters with their descriptions and defaults so the user knows what to provide.
+
+**Step 4 — Get the agent's webhook.**
 
 ```bash
 curl -s -H "Authorization: Bearer $API_KEY" \
@@ -99,7 +128,7 @@ curl -s -H "Authorization: Bearer $API_KEY" \
 
 Use the first webhook from the `webhooks` array. If no webhooks exist, tell the user the agent needs a webhook configured in the Airtop portal (https://portal.airtop.ai).
 
-**Step 3 — Invoke the webhook.**
+**Step 5 — Invoke the webhook.**
 
 ```bash
 curl -s -X POST "https://api.airtop.ai/api/hooks/agents/<agentId>/webhooks/<webhookId>" \
@@ -107,15 +136,15 @@ curl -s -X POST "https://api.airtop.ai/api/hooks/agents/<agentId>/webhooks/<webh
   -H "Authorization: Bearer $API_KEY" \
   -d '{
     "configVars": { <user-provided key-value pairs from --vars, or empty object {}> },
-    "version": 1
+    "version": <publishedVersion from agent details>
   }'
 ```
 
+Always use the `publishedVersion` value from the agent details as the `version` parameter — never hardcode it.
+
 The response contains `{ "invocationId": "<uuid>" }`. Save this for polling.
 
-Note: Include the `Authorization` header if the webhook has `requireAuth: true` (check the webhook object from Step 2).
-
-**Step 4 — Poll for the result.**
+**Step 6 — Poll for the result.**
 
 ```bash
 curl -s "https://api.airtop.ai/api/hooks/agents/<agentId>/invocations/<invocationId>/result" \
@@ -128,7 +157,7 @@ Polling rules:
 - Terminal statuses: `Completed`, `Failed`, `Cancelled`
 - **Timeout after 5 minutes** (60 polls). If not complete, tell the user the invocation is still running and provide the invocation ID so they can check later with the `status` command.
 
-**Step 5 — Display the result.**
+**Step 7 — Display the result.**
 
 - On `Completed`: Show the `output` field. If it's JSON, format it nicely. If it's a string, display it directly.
 - On `Failed`: Show the `error` field and the full status.
@@ -145,7 +174,7 @@ curl -s "https://api.airtop.ai/api/hooks/agents/<agentId>/invocations/<invocatio
 
 Display the `status` field. If terminal, also display `output` or `error`.
 
-Note: This requires the agent ID. If the user only provides an invocation ID, ask for the agent ID as well, or search recent invocations across agents to find it.
+Note: This requires both the agent ID and invocation ID. If the user only provides one, ask for the other.
 
 ### 4. Cancel Invocation
 

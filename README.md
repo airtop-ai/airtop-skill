@@ -1,19 +1,19 @@
-# Airtop Agents Skill for Claude Code
+# Airtop Agents Skill
 
-A [Claude Code](https://claude.com/claude-code) skill that lets you list, run, and monitor your [Airtop](https://airtop.ai) agents directly from the CLI.
+An [Agent Skill](https://agentskills.io) that lets you list, run, and monitor your [Airtop](https://airtop.ai) agents directly from your coding agent.
 
 ## Installation
 
+Install with the [skills CLI](https://github.com/vercel-labs/skills) (works with Claude Code, Cursor, Windsurf, Cline, Copilot, and 40+ other agents):
+
 ```bash
-claude skill add --from https://github.com/airtop-ai/airtop-skill
+npx skills add airtop-ai/airtop-skill
 ```
 
-Or add to your `.claude/settings.json`:
+Or install for Claude Code directly:
 
-```json
-{
-  "skills": ["https://github.com/airtop-ai/airtop-skill"]
-}
+```bash
+claude skill add --from https://github.com/airtop-ai/airtop-skill
 ```
 
 ## Setup
@@ -72,9 +72,8 @@ Polling runs every 5 seconds with a 5-minute timeout. If the agent hasn't finish
 
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code) CLI
 - An [Airtop](https://airtop.ai) account with at least one agent configured with a webhook
-- `curl` and `jq` available in your shell
+- `curl` available in your shell
 
 ## License
 

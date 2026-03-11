@@ -14,25 +14,81 @@
     },
     {
       "id": 2,
-      "prompt": "Run my Price Tracker agent with url set to https://example.com/product",
-      "expected_output": "Resolves the agent by name, gets its webhook, invokes it with the configVar, polls for the result, and displays the output",
+      "prompt": "List my enabled Airtop agents and run the first one",
+      "expected_output": "Lists agents, picks the first enabled one, gets its webhook, invokes it, polls for the result, and displays the output",
       "assertions": [
-        "Searches for the agent by name via GET /v2/agents?name=Price%20Tracker",
-        "Fetches the webhook via GET /v2/agents/{agentId}/webhooks",
+        "Lists agents via GET /v2/agents to find an enabled agent",
+        "Fetches the webhook for the chosen agent via GET /v2/agents/{agentId}/webhooks",
         "Invokes the webhook via POST to /api/hooks/agents/{agentId}/webhooks/{webhookId}",
-        "Passes {\"url\": \"https://example.com/product\"} in the configVars field of the request body",
+        "Sends a request body containing a configVars field",
         "Polls the invocation result endpoint until a terminal status is reached",
-        "Displays the final output to the user"
+        "Displays the final output or status to the user"
       ]
     },
     {
       "id": 3,
-      "prompt": "Cancel Airtop agent invocation abc-123 on agent def-456",
+      "prompt": "Cancel Airtop agent invocation 6ba7b810-9dad-11d1-80b4-00c04fd430c8 on agent 550e8400-e29b-41d4-a716-446655440000",
       "expected_output": "Sends a DELETE request to cancel the invocation and confirms the cancellation to the user",
       "assertions": [
-        "Makes a DELETE request to https://api.airtop.ai/api/v2/agents/def-456/invocations/abc-123?reason=user_requested",
+        "Makes a DELETE request to https://api.airtop.ai/api/v2/agents/550e8400-e29b-41d4-a716-446655440000/invocations/6ba7b810-9dad-11d1-80b4-00c04fd430c8?reason=user_requested",
         "Includes Authorization: Bearer header with the API key",
         "Confirms to the user that the cancellation was requested"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Check the status of Airtop invocation 7c9e6679-7425-40de-944b-e07fc1f90ae7 on agent 550e8400-e29b-41d4-a716-446655440000",
+      "expected_output": "Fetches the invocation result and displays the current status",
+      "assertions": [
+        "Makes a GET request to https://api.airtop.ai/api/hooks/agents/550e8400-e29b-41d4-a716-446655440000/invocations/7c9e6679-7425-40de-944b-e07fc1f90ae7/result",
+        "Includes Authorization: Bearer header with the API key",
+        "Displays the status field from the response"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Show the invocation history for Airtop agent 550e8400-e29b-41d4-a716-446655440000",
+      "expected_output": "Fetches recent invocations and displays them in a formatted table",
+      "assertions": [
+        "Makes a GET request to https://api.airtop.ai/api/v2/agents/550e8400-e29b-41d4-a716-446655440000/invocations",
+        "Includes Authorization: Bearer header with the API key",
+        "Displays results in a table with Invocation ID, Status, and Started At columns"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Run the Airtop agent called \"Price Tracker\" with variables url set to https://example.com and currency set to USD",
+      "expected_output": "Resolves the agent by name, gets its webhook, invokes it with the provided config variables, and polls for the result",
+      "assertions": [
+        "Searches for the agent by name via GET /v2/agents?name=Price%20Tracker",
+        "Fetches the webhook for the resolved agent",
+        "Invokes the webhook with a request body containing configVars with url and currency keys",
+        "The configVars include url set to https://example.com and currency set to USD",
+        "Polls the invocation result endpoint until a terminal status is reached"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Run Airtop agent 550e8400-e29b-41d4-a716-446655440000",
+      "expected_output": "Skips name resolution and uses the UUID directly, gets webhook, invokes, and polls",
+      "assertions": [
+        "Does NOT search by name since the argument is a UUID",
+        "Fetches the webhook via GET /v2/agents/550e8400-e29b-41d4-a716-446655440000/webhooks",
+        "Invokes the webhook via POST to /api/hooks/agents/550e8400-e29b-41d4-a716-446655440000/webhooks/{webhookId}",
+        "Polls the invocation result endpoint until a terminal status is reached"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Run the Airtop agent called \"Carrier Source\" (assume the API returns one agent named \"Carrier Source Search Agent\" that is disabled with hasDraft=true and no publishedVersion)",
+      "expected_output": "Finds the agent by name, detects it is disabled and draft-only, warns the user it cannot be run, and does NOT attempt to invoke the webhook",
+      "assertions": [
+        "Searches for the agent by name via GET /v2/agents?name=...",
+        "Fetches the full agent details via GET /v2/agents/{agentId}",
+        "Detects that the agent is disabled (enabled=false)",
+        "Detects that the agent is draft-only (hasDraft=true, no publishedVersion)",
+        "Does NOT attempt to fetch webhooks or invoke the agent",
+        "Informs the user that the agent is disabled and/or draft-only and cannot be run"
       ]
     }
   ]
