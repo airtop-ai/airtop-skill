@@ -2,14 +2,15 @@
 
 ## Project Overview
 
-This is an Airtop Agents skill for Claude Code (and other AI coding agents). The skill file is `SKILL.md` and it teaches Claude how to list, run, monitor, and cancel Airtop agents via their REST API.
+This is an Airtop Agents skill for Claude Code (and other AI coding agents). The skill file is `skills/airtop-agents/SKILL.md` and it teaches Claude how to list, run, monitor, and cancel Airtop agents via their REST API.
 
 ## Project Structure
 
-- `SKILL.md` — The skill definition (frontmatter + instructions)
-- `evals/evals.json` — 8 eval cases testing skill behavior
-- `README.md` — User-facing documentation
-- `EXAMPLES.md` — Usage examples
+- `skills/airtop-agents/SKILL.md` — The skill definition (frontmatter + instructions). This subdirectory is what `npx skills add` installs — only its contents are copied to the user's project.
+- `skills/airtop-agents/.env.example` — Example env file (copied into the installed skill directory)
+- `evals/evals.json` — 8 eval cases testing skill behavior (not installed)
+- `README.md` — User-facing documentation (not installed)
+- `EXAMPLES.md` — Usage examples (not installed)
 - `.env` — Local API key (not committed)
 
 ## Running Evals
@@ -36,7 +37,7 @@ export AIRTOP_API_KEY="your-key-here"
 
 # Run a single eval (example: eval 1)
 unset CLAUDECODE && claude -p \
-  --system-prompt "$(cat SKILL.md)" \
+  --system-prompt "$(cat skills/airtop-agents/SKILL.md)" \
   --dangerously-skip-permissions \
   --output-format stream-json \
   --model sonnet \
