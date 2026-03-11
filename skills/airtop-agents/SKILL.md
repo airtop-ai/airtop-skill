@@ -19,7 +19,25 @@ The Airtop API key is required for all operations. Resolve it in this order:
 
 1. `$AIRTOP_API_KEY` environment variable
 2. A `.env` file in this skill's directory containing `AIRTOP_API_KEY=...`
-3. If neither is found, ask the user to provide their API key (available at https://portal.airtop.ai/api-keys) and save it to the skill's `.env` file before using it.
+3. If neither is found, **offer the user two options** before proceeding:
+
+> **Option A — Set it up yourself (recommended if you prefer not to share your key in chat):**
+>
+> Run these commands in your terminal:
+> ```
+> cp "$(dirname "$SKILL_PATH")/.env.example" "$(dirname "$SKILL_PATH")/.env"
+> ```
+> Then open the `.env` file and replace `your-api-key-here` with your key from https://portal.airtop.ai/api-keys.
+>
+> Once done, say "done" and I'll pick it up automatically.
+>
+> **Option B — Paste it here and I'll save it for you:**
+>
+> Paste your API key (from https://portal.airtop.ai/api-keys) and I'll write it to the `.env` file so it's available for future use.
+
+Print both options exactly as above (with the actual resolved path instead of the `$(dirname ...)` expression) and wait for the user to choose. Do not assume a preference.
+
+### Handling a pasted key (Option B)
 
 **Important — always load the key from the `.env` file, never use a pasted value directly.**
 
@@ -37,6 +55,14 @@ When a user provides their API key interactively (e.g. pasting it into chat), te
 Even when `$AIRTOP_API_KEY` is already set in the environment, prefer loading from `.env` if the file exists — the environment variable may have been set in the same shell session from a pasted value and could carry the same invisible characters.
 
 Never assign a user-pasted key directly to a shell variable and use it in API calls (e.g. `API_KEY="<pasted-value>"` followed by `curl -H "Authorization: Bearer $API_KEY"`). Always go through the `.env` file write-then-read cycle to sanitize the value.
+
+### Loading and validating the key
+
+Once the `.env` file exists (whether set up by the user or written by you), load and validate:
+
+```bash
+API_KEY=$(grep AIRTOP_API_KEY "$(dirname "$SKILL_PATH")/.env" | cut -d= -f2-)
+```
 
 **Validate the key immediately** after loading it:
 ```bash
