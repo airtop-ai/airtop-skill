@@ -5,14 +5,14 @@ A [Claude Code](https://claude.com/claude-code) skill that lets you list, run, a
 ## Installation
 
 ```bash
-claude skill add --from https://github.com/airtop-ai/claude-code-airtop-skill
+claude skill add --from https://github.com/airtop-ai/airtop-skill
 ```
 
 Or add to your `.claude/settings.json`:
 
 ```json
 {
-  "skills": ["https://github.com/airtop-ai/claude-code-airtop-skill"]
+  "skills": ["https://github.com/airtop-ai/airtop-skill"]
 }
 ```
 
