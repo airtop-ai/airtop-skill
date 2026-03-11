@@ -19,18 +19,30 @@ The Airtop API key is required for all operations. Resolve it in this order:
 
 1. `$AIRTOP_API_KEY` environment variable
 2. A `.env` file in this skill's directory containing `AIRTOP_API_KEY=...`
-3. If neither is found, ask the user to provide their API key (available at https://portal.airtop.ai/api-keys) and offer to save it to the skill's `.env` file.
+3. If neither is found, ask the user to provide their API key (available at https://portal.airtop.ai/api-keys) and save it to the skill's `.env` file before using it.
 
-Store the resolved key in a shell variable for the session:
+**Important — always load the key from the `.env` file, never use a pasted value directly.**
 
+When a user provides their API key interactively (e.g. pasting it into chat), text copied from web UIs or chat messages can contain invisible Unicode characters (zero-width spaces, byte-order marks, etc.) that silently break authentication. To avoid this:
+
+1. **Write the key to `.env` first** — this round-trips it through file I/O which strips invisible characters:
+   ```bash
+   echo "AIRTOP_API_KEY=<pasted-value>" > "$(dirname "$SKILL_PATH")/.env"
+   ```
+2. **Then read it back** from the file to get a clean value:
+   ```bash
+   API_KEY=$(grep AIRTOP_API_KEY "$(dirname "$SKILL_PATH")/.env" | cut -d= -f2-)
+   ```
+
+Even when `$AIRTOP_API_KEY` is already set in the environment, prefer loading from `.env` if the file exists — the environment variable may have been set in the same shell session from a pasted value and could carry the same invisible characters.
+
+Never assign a user-pasted key directly to a shell variable and use it in API calls (e.g. `API_KEY="<pasted-value>"` followed by `curl -H "Authorization: Bearer $API_KEY"`). Always go through the `.env` file write-then-read cycle to sanitize the value.
+
+**Validate the key immediately** after loading it:
 ```bash
-API_KEY="${AIRTOP_API_KEY}"
+curl -sf -H "Authorization: Bearer ${API_KEY}" "https://api.airtop.ai/api/v2/agents?limit=1" > /dev/null
 ```
-
-If loading from `.env`:
-```bash
-API_KEY=$(grep AIRTOP_API_KEY "$(dirname "$SKILL_PATH")/.env" | cut -d= -f2-)
-```
+If this returns a non-zero exit code, tell the user their API key appears invalid and link them to https://portal.airtop.ai/api-keys.
 
 ## Base URL
 
