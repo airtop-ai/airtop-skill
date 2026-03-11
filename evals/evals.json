@@ -1,0 +1,39 @@
+{
+  "skill_name": "airtop-agents",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "List my Airtop agents",
+      "expected_output": "A formatted markdown table of agents with Name, ID, Enabled, and Last Run columns, fetched from the Airtop API",
+      "assertions": [
+        "Makes a GET request to https://api.airtop.ai/api/v2/agents",
+        "Includes Authorization: Bearer header with the API key",
+        "Displays results in a markdown table format",
+        "Shows agent name, ID, and enabled status"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run my Price Tracker agent with url set to https://example.com/product",
+      "expected_output": "Resolves the agent by name, gets its webhook, invokes it with the configVar, polls for the result, and displays the output",
+      "assertions": [
+        "Searches for the agent by name via GET /v2/agents?name=Price%20Tracker",
+        "Fetches the webhook via GET /v2/agents/{agentId}/webhooks",
+        "Invokes the webhook via POST to /api/hooks/agents/{agentId}/webhooks/{webhookId}",
+        "Passes {\"url\": \"https://example.com/product\"} in the configVars field of the request body",
+        "Polls the invocation result endpoint until a terminal status is reached",
+        "Displays the final output to the user"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Cancel Airtop agent invocation abc-123 on agent def-456",
+      "expected_output": "Sends a DELETE request to cancel the invocation and confirms the cancellation to the user",
+      "assertions": [
+        "Makes a DELETE request to https://api.airtop.ai/api/v2/agents/def-456/invocations/abc-123?reason=user_requested",
+        "Includes Authorization: Bearer header with the API key",
+        "Confirms to the user that the cancellation was requested"
+      ]
+    }
+  ]
+}
