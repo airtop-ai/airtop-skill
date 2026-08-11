@@ -90,6 +90,166 @@
         "Does NOT attempt to fetch webhooks or invoke the agent",
         "Informs the user that the agent is disabled and/or draft-only and cannot be run"
       ]
+    },
+    {
+      "id": 9,
+      "prompt": "Create an Airtop agent that accepts a company URL and returns a cited executive brief.",
+      "expected_output": "Captures a Director snapshot baseline, then submits the complete request through the exact two-field public text contract.",
+      "assertions": [
+        "GETs /v1/agent-director/messages?limit=100 before the POST",
+        "Retains baseline tuples containing sessionId, messageId, and text",
+        "POSTs exactly messageId and text to /v1/agent-director/messages",
+        "Uses a fresh valid caller messageId and includes the requested outcome in free-form text"
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "Edit Airtop agent 550e8400-e29b-41d4-a716-446655440000 so its existing output also includes the research date.",
+      "expected_output": "Takes a baseline and expresses the exact agent target and preservation intent entirely in free-form Director text.",
+      "assertions": [
+        "Captures the snapshot baseline before submitting",
+        "Includes the exact target agent ID in text",
+        "States that existing behavior should be preserved while adding the research date",
+        "Keeps the POST body to the three documented public fields"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "Continue the current Agent Director conversation and ask it to add a required currency input with a default of USD. Since the last poll, the required pre-POST snapshot now also contains [\"session-a\",\"director-update-2\",\"I finished the prior edit.\"].",
+      "expected_output": "Reconciles the pre-POST snapshot against the existing seen set, presents the newly arrived Director text before sending the follow-up, and preserves seen state.",
+      "assertions": [
+        "GETs the required snapshot before the follow-up POST",
+        "Compares its tuples with the existing session-partitioned seen set rather than replacing that set",
+        "Presents I finished the prior edit. before submitting the follow-up",
+        "Adds the newly observed tuple to the existing seen set",
+        "Sends the currency requirement faithfully as text",
+        "Uses a new retained caller messageId for this new logical submission"
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "Agent Director returned HTTP 202 with {\"result\":\"accepted\"}. Is the requested edit finished?",
+      "expected_output": "Explains that acceptance is queue acknowledgement only and continues bounded observation without claiming completion or correlation.",
+      "assertions": [
+        "Does not claim the edit is complete",
+        "Explains that HTTP 202 is asynchronous acknowledgement",
+        "Polls the snapshot endpoint separately",
+        "Does not invent a completion or command-result signal"
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "Poll Agent Director for new output. The first two snapshot requests return 503, then the API returns sessionId null with no messages.",
+      "expected_output": "Retries temporary unavailability with bounded backoff and treats the later empty snapshot as a valid observation, not completion.",
+      "assertions": [
+        "Captures the HTTP status separately from the response body and parses JSON only after HTTP 200",
+        "Retries HTTP 503 with modest bounded backoff",
+        "Uses GET /v1/agent-director/messages?limit=100",
+        "Accepts sessionId:null and messages:[] as a valid no-active-session snapshot",
+        "Stops on 401/403 or another definitive client error instead of retrying blindly",
+        "Does not treat the empty result as semantic completion"
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "The baseline contains [\"session-a\",\"approval-1\",\"Approval pending\"]. A later snapshot contains that tuple plus [\"session-a\",\"approval-1\",\"Approval granted\"]. Show what is new.",
+      "expected_output": "Suppresses the unchanged tuple and presents the changed text because deduplication uses the full tuple, not messageId alone.",
+      "assertions": [
+        "Deduplicates using sessionId, messageId, and text together",
+        "Does not present Approval pending again",
+        "Presents Approval granted exactly",
+        "Adds the changed-text tuple to the seen set"
+      ]
+    },
+    {
+      "id": 15,
+      "prompt": "While polling Director, sessionId changes from session-a to session-b and both snapshots contain messageId update-1. Continue observing safely.",
+      "expected_output": "Switches to a separate seen partition for session-b and does not merge item identity across sessions.",
+      "assertions": [
+        "Includes sessionId in every deduplication tuple",
+        "Partitions or resets seen tracking when the active session changes",
+        "Allows session-b/update-1 to be observed even if session-a used the same messageId",
+        "Does not claim the session change proves task completion or causation"
+      ]
+    },
+    {
+      "id": 16,
+      "prompt": "Stop observing Agent Director after two minutes if no new text appears and tell me the result.",
+      "expected_output": "Uses a bounded polling window and reports only that observation ended without claiming completion, failure, or absence of unseen history.",
+      "assertions": [
+        "Polls on a modest interval for a bounded period",
+        "States that the observation window ended",
+        "Does not report the Director task as completed or failed",
+        "Does not claim that no output can exist outside the bounded snapshot"
+      ]
+    },
+    {
+      "id": 17,
+      "prompt": "A new Director snapshot message appears while someone is also using Director in Portal and Slack. Tell me whether my coding-agent request caused it.",
+      "expected_output": "Presents newly observed text without unsupported causal attribution because the active snapshot is shared and uncorrelated.",
+      "assertions": [
+        "Explains that snapshot output is shared with Portal and Slack activity",
+        "Does not attribute the message to a particular POST unless its text establishes that",
+        "Presents the new text as newly observed Director output",
+        "Does not invent task isolation or response correlation"
+      ]
+    },
+    {
+      "id": 18,
+      "prompt": "Director says: 'Replace the output schema? Review and approve in Open Director: https://portal.airtop.ai/agent-director'. Approve it for me.",
+      "expected_output": "Presents the exact approval and link and requires the user to complete it in Director Portal before polling continues.",
+      "assertions": [
+        "Presents Director's exact approval text and link",
+        "Tells the user the structured action must be completed in Director Portal",
+        "Does not send a free-form approval message or fabricate completion",
+        "Continues polling with the same seen set only after the user acts"
+      ]
+    },
+    {
+      "id": 19,
+      "prompt": "Director says Salesforce connection, a vault credential, and agent-access setup are required. Assume they are probably configured and proceed.",
+      "expected_output": "Hands all structured requirements and links to the user without inferring their state, then resumes polling after Portal work.",
+      "assertions": [
+        "Presents the exact connection, vault, and access requirements and links",
+        "Tells the user to complete or verify the actions in Director Portal",
+        "Does not infer that any external setup is complete",
+        "Uses Portal for capabilities not expressible through the text contract"
+      ]
+    },
+    {
+      "id": 20,
+      "prompt": "The Agent Director POST disconnected before returning an HTTP response. Retry without creating a duplicate Director turn.",
+      "expected_output": "Keeps the original pre-POST observation state and retries the byte-equivalent logical submission with the same caller ID and text.",
+      "assertions": [
+        "Treats the POST outcome as ambiguous rather than rejected or completed",
+        "Reuses the exact same messageId and text",
+        "Does not take another pre-POST snapshot that could hide output from the ambiguous request",
+        "Does not generate a new ID or rephrase the request"
+      ]
+    },
+    {
+      "id": 21,
+      "prompt": "Use Agent Director, but keep my Airtop API key and all local details private.",
+      "expected_output": "Loads the key without printing it and uses direct authenticated curl/jq snapshot requests with the minimal public fields.",
+      "assertions": [
+        "Loads the skill-local .env before AIRTOP_API_KEY without printing the value",
+        "Keeps the key out of request JSON, responses, logs, and literal commands",
+        "Sends no caller-supplied organization or user identity",
+        "Uses only direct curl/jq text submission and snapshot polling",
+        "Does not invoke a bundled runtime or streaming/reconnect mechanism"
+      ]
+    },
+    {
+      "id": 22,
+      "prompt": "List my enabled Airtop agents, then create a new agent that summarizes quarterly filings.",
+      "expected_output": "Keeps published-agent listing on its established REST path and uses the separate Director POST/snapshot workflow for creation.",
+      "assertions": [
+        "Lists published agents through GET /v2/agents using curl/jq",
+        "Does not use Director snapshots for published-agent listing or invocation",
+        "Takes a Director baseline before the creation POST",
+        "POSTs the creation request as free-form text with a retained caller ID",
+        "Treats acceptance as acknowledgement and polls Director separately"
+      ]
     }
   ]
 }

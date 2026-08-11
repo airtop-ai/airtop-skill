@@ -64,6 +64,22 @@ Sends a cancellation request for the specified invocation.
 
 Shows the 10 most recent invocations for the agent.
 
+## Create an Agent
+
+```
+/airtop-agents create an agent named "Executive Brief" that accepts a company URL and returns a cited summary of its leadership, products, and recent news
+```
+
+Sends the complete request to Agent Director and presents newly observed Director messages while the request is being processed.
+
+## Modify an Existing Agent
+
+```
+/airtop-agents edit agent 550e8400-e29b-41d4-a716-446655440000 to preserve its existing behavior and include the research date in its output
+```
+
+Includes the agent ID and requested changes in the free-form message sent to Agent Director.
+
 ## Common Scenarios
 
 ### Agent name matches multiple results

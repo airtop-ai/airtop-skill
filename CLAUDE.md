@@ -6,9 +6,11 @@ This is an Airtop Agents skill for Claude Code (and other AI coding agents). The
 
 ## Project Structure
 
-- `skills/airtop-agents/SKILL.md` — The skill definition (frontmatter + instructions). This subdirectory is what `npx skills add` installs — only its contents are copied to the user's project.
+- `skills/airtop-agents/SKILL.md` — The consolidated skill definition and shared routing, authentication, and safety instructions. This subdirectory is what `npx skills add` installs — only its contents are copied to the user's project.
 - `skills/airtop-agents/.env.example` — Example env file (copied into the installed skill directory)
-- `evals/evals.json` — 8 eval cases testing skill behavior (not installed)
+- `skills/airtop-agents/references/published-agents.md` — Published-agent invocation workflow (installed)
+- `skills/airtop-agents/references/director.md` — Agent Director text and polling workflow (installed)
+- `evals/evals.json` — 22 eval cases testing published-agent and Director behavior (not installed)
 - `README.md` — User-facing documentation (not installed)
 - `EXAMPLES.md` — Usage examples (not installed)
 - `.env` — Local API key (not committed)
