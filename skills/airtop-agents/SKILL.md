@@ -2,7 +2,7 @@
 name: airtop-agents
 description: List, run, create, edit, and monitor Airtop agents. Use when asked to run an Airtop agent, check agent status, list agents, invoke a webhook agent, modify an agent, or create a recurring task. Airtop agents are a powerful way to automate your workflows and tasks.
 license: MIT
-compatibility: Requires curl, jq, and a shell environment. Requires an Airtop API key from https://portal.airtop.ai/api-keys.
+compatibility: Requires curl, jq, uuidgen, and a shell environment. Requires an Airtop API key from https://portal.airtop.ai/api-keys.
 allowed-tools: Bash Read Write
 metadata:
   author: airtop-ai
@@ -26,8 +26,8 @@ Never use the Director endpoints to invoke a published agent. Never use publishe
 
 The Airtop API key is required for all operations. Resolve it in this order:
 
-1. `$AIRTOP_API_KEY` environment variable
-2. A `.env` file in this skill's directory containing `AIRTOP_API_KEY=...`
+1. A `.env` file in this skill's directory containing `AIRTOP_API_KEY=...`
+2. `$AIRTOP_API_KEY` environment variable
 3. If neither is found, **offer the user two options** before proceeding:
 
 > **Option A — Set it up yourself (recommended if you prefer not to share your key in chat):**

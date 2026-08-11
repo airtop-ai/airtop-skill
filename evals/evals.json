@@ -94,36 +94,40 @@
     {
       "id": 9,
       "prompt": "Create an Airtop agent that accepts a company URL and returns a cited executive brief.",
-      "expected_output": "Captures a Director snapshot baseline, then submits the complete request through the exact two-field public text contract.",
+      "expected_output": "Generates a bare caller UUID, submits the complete request through the exact two-field public text contract, then starts locally filtered observation with an empty seen set.",
       "assertions": [
-        "GETs /v1/agent-director/messages?limit=100 before the POST",
-        "Retains baseline tuples containing sessionId, messageId, and text",
         "POSTs exactly messageId and text to /v1/agent-director/messages",
-        "Uses a fresh valid caller messageId and includes the requested outcome in free-form text"
+        "Generates a fresh UUID locally using uuidgen",
+        "Sends the bare UUID as messageId without a harness or source prefix",
+        "Treats the request messageId as an idempotency key distinct from snapshot conversation-item messageId values",
+        "Includes the requested outcome in free-form text",
+        "Does not wait for a Director snapshot before submitting",
+        "Starts snapshot observation immediately after HTTP 202 with an empty seen set",
+        "Presents every tuple in the first non-empty snapshot as recent uncorrelated Director conversation and records it as seen"
       ]
     },
     {
       "id": 10,
       "prompt": "Edit Airtop agent 550e8400-e29b-41d4-a716-446655440000 so its existing output also includes the research date.",
-      "expected_output": "Takes a baseline and expresses the exact agent target and preservation intent entirely in free-form Director text.",
+      "expected_output": "Expresses the exact agent target and preservation intent entirely in free-form Director text, then observes Director after acceptance.",
       "assertions": [
-        "Captures the snapshot baseline before submitting",
         "Includes the exact target agent ID in text",
         "States that existing behavior should be preserved while adding the research date",
-        "Keeps the POST body to the three documented public fields"
+        "Keeps the POST body to the two documented public fields",
+        "Starts snapshot observation after HTTP 202 rather than requiring a pre-POST snapshot"
       ]
     },
     {
       "id": 11,
-      "prompt": "Continue the current Agent Director conversation and ask it to add a required currency input with a default of USD. Since the last poll, the required pre-POST snapshot now also contains [\"session-a\",\"director-update-2\",\"I finished the prior edit.\"].",
-      "expected_output": "Reconciles the pre-POST snapshot against the existing seen set, presents the newly arrived Director text before sending the follow-up, and preserves seen state.",
+      "prompt": "Continue the current Agent Director conversation and ask it to add a required currency input with a default of USD. The next snapshot also contains [\"session-a\",\"director-update-2\",\"I finished the prior edit.\"].",
+      "expected_output": "Submits the follow-up with a new caller UUID, then reconciles the next snapshot against the existing seen set without attributing newly observed Director text to that POST.",
       "assertions": [
-        "GETs the required snapshot before the follow-up POST",
+        "Does not require a snapshot before the follow-up POST",
         "Compares its tuples with the existing session-partitioned seen set rather than replacing that set",
-        "Presents I finished the prior edit. before submitting the follow-up",
+        "Presents I finished the prior edit. as newly observed Director output without unsupported causal attribution",
         "Adds the newly observed tuple to the existing seen set",
         "Sends the currency requirement faithfully as text",
-        "Uses a new retained caller messageId for this new logical submission"
+        "Uses a new retained bare caller UUID for this new logical submission"
       ]
     },
     {
@@ -152,7 +156,7 @@
     },
     {
       "id": 14,
-      "prompt": "The baseline contains [\"session-a\",\"approval-1\",\"Approval pending\"]. A later snapshot contains that tuple plus [\"session-a\",\"approval-1\",\"Approval granted\"]. Show what is new.",
+      "prompt": "The seen set contains [\"session-a\",\"approval-1\",\"Approval pending\"]. A later snapshot contains that tuple plus [\"session-a\",\"approval-1\",\"Approval granted\"]. Show what is new.",
       "expected_output": "Suppresses the unchanged tuple and presents the changed text because deduplication uses the full tuple, not messageId alone.",
       "assertions": [
         "Deduplicates using sessionId, messageId, and text together",
@@ -174,13 +178,15 @@
     },
     {
       "id": 16,
-      "prompt": "Stop observing Agent Director after two minutes if no new text appears and tell me the result.",
-      "expected_output": "Uses a bounded polling window and reports only that observation ended without claiming completion, failure, or absence of unseen history.",
+      "prompt": "Agent Director has produced no new text for 45 minutes. Continue safely.",
+      "expected_output": "Performs one final reconciliation, then sends one status request with a fresh UUID and observes briefly without claiming completion or creating a status loop.",
       "assertions": [
-        "Polls on a modest interval for a bounded period",
-        "States that the observation window ended",
-        "Does not report the Director task as completed or failed",
-        "Does not claim that no output can exist outside the bounded snapshot"
+        "Polls every 30 seconds while keeping unchanged snapshots out of model context",
+        "Performs one final snapshot reconciliation before requesting status",
+        "Uses a fresh UUID for the new status request",
+        "Asks for concise status and exact user actions or Portal links when blocked",
+        "Observes for the status response for another 10 to 15 minutes",
+        "Sends at most one automatic status request and does not claim completion from silence"
       ]
     },
     {
@@ -219,12 +225,12 @@
     {
       "id": 20,
       "prompt": "The Agent Director POST disconnected before returning an HTTP response. Retry without creating a duplicate Director turn.",
-      "expected_output": "Keeps the original pre-POST observation state and retries the byte-equivalent logical submission with the same caller ID and text.",
+      "expected_output": "Retries the byte-equivalent logical submission with the same caller ID and text, then starts observation without creating a duplicate Director turn.",
       "assertions": [
         "Treats the POST outcome as ambiguous rather than rejected or completed",
-        "Reuses the exact same messageId and text",
-        "Does not take another pre-POST snapshot that could hide output from the ambiguous request",
-        "Does not generate a new ID or rephrase the request"
+        "Reuses the exact same bare UUID messageId and text",
+        "Does not generate a new ID or rephrase the request",
+        "Starts snapshot observation after the POST has a definitive accepted result"
       ]
     },
     {
@@ -246,9 +252,21 @@
       "assertions": [
         "Lists published agents through GET /v2/agents using curl/jq",
         "Does not use Director snapshots for published-agent listing or invocation",
-        "Takes a Director baseline before the creation POST",
-        "POSTs the creation request as free-form text with a retained caller ID",
-        "Treats acceptance as acknowledgement and polls Director separately"
+        "POSTs the creation request as free-form text with a retained bare caller UUID",
+        "Treats acceptance as acknowledgement and starts Director polling afterward with an empty seen set"
+      ]
+    },
+    {
+      "id": 23,
+      "prompt": "Observe Agent Director in a background task. After 15 seconds, one snapshot contains two unseen Director messages, but task stdout is not visible to the model until the task exits.",
+      "expected_output": "The bounded poller records and emits both unseen messages as one batch, exits successfully immediately, and lets the harness present them without waiting for the observation deadline.",
+      "assertions": [
+        "Does not rely on incremental stdout from the still-running background task",
+        "Detects unseen output using full sessionId, messageId, and text tuples",
+        "Records and emits every unseen tuple from the snapshot before exiting",
+        "Exits successfully as soon as the unseen batch is emitted instead of waiting for the bounded window to expire",
+        "Presents the surfaced Director messages immediately after the task exits",
+        "Starts a new 45-minute inactivity window with the same seen state only if continued observation is appropriate"
       ]
     }
   ]

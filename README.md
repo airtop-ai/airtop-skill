@@ -83,12 +83,12 @@ The skill uses the Airtop REST API to manage agents:
 
 Published-agent invocation polling runs every 5 seconds with a 5-minute timeout. If the agent hasn't finished by then, you'll get the invocation ID to check later.
 
-Airtop Director polling runs every minute with a 30-minute timeout. If the agent hasn't finished by then, Director will be asked for a status update.
+Airtop Director uses locally filtered observation that surfaces new output as it arrives and requests one status update after 45 minutes of inactivity.
 
 ## Requirements
 
 - An [Airtop](https://airtop.ai) account with at least one agent configured with a webhook
-- `curl` available in your shell
+- `curl` , `jq` and `uuidgen` available in your shell
 
 ## License
 
