@@ -55,20 +55,22 @@ curl -sS -w '\nHTTP_STATUS:%{http_code}\n' \
   "https://api.airtop.ai/api/v1/agent-director/messages?limit=100"
 ```
 
-- Construct an observer as a background shell operation for the current task.
-- Keep the background process attached to the harness terminal.
+- Construct an observer as a background shell operation for the current task. Run only one observer for this Director conversation at a time and keep it attached to the harness terminal.
+- Create one task-local, append-only JSONL observation log. Reuse it throughout the Director conversation and never truncate it.
+- Store one compact JSON object per observed message containing `sessionId`, `messageId`, `text`, and `createdAt`.
+- Identify output with the exact `(sessionId, messageId, text)` tuple. Changed text or the same `messageId` in another session is new output.
 - Each response ends with an `HTTP_STATUS` marker. Parse the preceding JSON only after a successful `curl` call with `HTTP_STATUS:200`.
 - Validate `sessionId` as a string or null and `messages` as an array whose items contain string `messageId`, `text`, and `createdAt` fields.
-- Poll every 30 seconds. Keep responses and comparison state in task-local temporary files; do not print raw snapshots, unchanged messages, polling progress, or retryable errors into model context.
-- Initialize an empty seen set once when beginning a Director conversation and preserve it across follow-ups and status checks. Identify output with the exact `(sessionId, messageId, text)` tuple; changed text or the same `messageId` in another session is new output.
-- On the first successful non-empty snapshot, treat every tuple as unseen. Record and emit the entire batch as **recent Director conversation**, without claiming that the submitted request caused it.
-- On later snapshots, record and emit the entire unseen batch once, then exit the observer immediately. Do not emit tuples already in the seen set.
+- Poll every 30 seconds. Keep raw responses transient; do not print raw snapshots, unchanged messages, polling progress, or retryable errors into model context.
+- For every successful snapshot, append all tuples not already in the observation log. Then print the actual newly appended message objects to stdout as one compact JSON batch and exit immediately.
+- Apply the same append, stdout, and immediate-exit behavior to the first non-empty snapshot. Because the log starts empty, its entire first batch is unseen; present it as **recent Director conversation** without claiming that the submitted request caused it.
+- After the observer exits, present every emitted message before starting another observer with the same append-only log.
 - Retry HTTP 503 on the next polling interval. On 401/403 or another definitive client error, exit and report the error.
 - No active session is a successful empty response: `{"sessionId":null,"messages":[]}`.
 
 Use a 45-minute inactivity window:
 
-- If the observer emits unseen messages, present every message with its exact text and links. If Director still appears to be working, start another observer with the same seen state. This starts a fresh 45-minute inactivity window.
+- If the observer emits unseen messages, present every message with its exact text and links. If Director still appears to be working, start another observer with the same observation log. This starts a fresh 45-minute inactivity window.
 - If no new Director text appears for 45 minutes, perform one final snapshot reconciliation. If that reveals new output, present it instead of requesting status.
 - If the final reconciliation is still empty, exit the observer with one compact result; do not expose its repeated snapshots to the model.
 
@@ -78,12 +80,12 @@ After 45 minutes without new Director text and a final empty reconciliation, sen
 
 > Please provide a concise status update on the request to `<specific goal or agent>`. If work is blocked on user action, state exactly what is required and include the relevant Director Portal link.
 
-- Preserve the existing seen state. The final reconciliation above is the status request's pre-POST snapshot.
+- Preserve the existing observation log. The final reconciliation above is the status request's pre-POST snapshot.
 - Observe for the status response for another 10–15 minutes, using the same local filtering and immediate-exit behavior.
 - Send at most one automatic status request for the original request; never create a status-of-status loop.
 - If Director requests approval, configuration, a connection, credentials, or another external action, present its exact request and link and wait for the user.
 - If Director reports completion or failure, report Director's statement without asserting stronger causal correlation than the snapshot provides.
-- If Director reports that work is continuing, tell the user and resume the normal 45-minute observation window with the same seen state.
+- If Director reports that work is continuing, tell the user and resume the normal 45-minute observation window with the same observation log.
 - If no status response appears, tell the user that both messages were accepted but no new Director output was observed, stop polling, and ask whether they want to check again.
 
 ## Important Notes

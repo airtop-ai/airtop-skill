@@ -94,7 +94,7 @@
     {
       "id": 9,
       "prompt": "Create an Airtop agent that accepts a company URL and returns a cited executive brief.",
-      "expected_output": "Generates a bare caller UUID, submits the complete request through the exact two-field public text contract, then starts locally filtered observation with an empty seen set.",
+      "expected_output": "Generates a bare caller UUID, submits the complete request through the exact two-field public text contract, then starts locally filtered observation with one empty append-only JSONL log.",
       "assertions": [
         "POSTs exactly messageId and text to /v1/agent-director/messages",
         "Generates a fresh UUID locally using uuidgen",
@@ -102,8 +102,9 @@
         "Treats the request messageId as an idempotency key distinct from snapshot conversation-item messageId values",
         "Includes the requested outcome in free-form text",
         "Does not wait for a Director snapshot before submitting",
-        "Starts snapshot observation immediately after HTTP 202 with an empty seen set",
-        "Presents every tuple in the first non-empty snapshot as recent uncorrelated Director conversation and records it as seen"
+        "Starts snapshot observation immediately after HTTP 202 with one empty append-only JSONL log used as both transcript and seen state",
+        "Appends every tuple in the first non-empty snapshot, prints the actual batch to stdout, and exits the observer immediately",
+        "Presents the first batch as recent uncorrelated Director conversation"
       ]
     },
     {
@@ -120,12 +121,12 @@
     {
       "id": 11,
       "prompt": "Continue the current Agent Director conversation and ask it to add a required currency input with a default of USD. The next snapshot also contains [\"session-a\",\"director-update-2\",\"I finished the prior edit.\"].",
-      "expected_output": "Submits the follow-up with a new caller UUID, then reconciles the next snapshot against the existing seen set without attributing newly observed Director text to that POST.",
+      "expected_output": "Submits the follow-up with a new caller UUID, then reconciles the next snapshot against the existing append-only observation log without attributing newly observed Director text to that POST.",
       "assertions": [
         "Does not require a snapshot before the follow-up POST",
-        "Compares its tuples with the existing session-partitioned seen set rather than replacing that set",
+        "Compares its tuples with the existing append-only observation log rather than replacing or truncating it",
         "Presents I finished the prior edit. as newly observed Director output without unsupported causal attribution",
-        "Adds the newly observed tuple to the existing seen set",
+        "Appends the newly observed tuple to the existing observation log",
         "Sends the currency requirement faithfully as text",
         "Uses a new retained bare caller UUID for this new logical submission"
       ]
@@ -156,22 +157,22 @@
     },
     {
       "id": 14,
-      "prompt": "The seen set contains [\"session-a\",\"approval-1\",\"Approval pending\"]. A later snapshot contains that tuple plus [\"session-a\",\"approval-1\",\"Approval granted\"]. Show what is new.",
+      "prompt": "The observation log contains [\"session-a\",\"approval-1\",\"Approval pending\"]. A later snapshot contains that tuple plus [\"session-a\",\"approval-1\",\"Approval granted\"]. Show what is new.",
       "expected_output": "Suppresses the unchanged tuple and presents the changed text because deduplication uses the full tuple, not messageId alone.",
       "assertions": [
         "Deduplicates using sessionId, messageId, and text together",
         "Does not present Approval pending again",
         "Presents Approval granted exactly",
-        "Adds the changed-text tuple to the seen set"
+        "Appends the changed-text tuple to the observation log"
       ]
     },
     {
       "id": 15,
       "prompt": "While polling Director, sessionId changes from session-a to session-b and both snapshots contain messageId update-1. Continue observing safely.",
-      "expected_output": "Switches to a separate seen partition for session-b and does not merge item identity across sessions.",
+      "expected_output": "Uses sessionId in the append-only observation log so item identity remains distinct across Director sessions.",
       "assertions": [
         "Includes sessionId in every deduplication tuple",
-        "Partitions or resets seen tracking when the active session changes",
+        "Keeps both sessions in the same append-only log without truncating it",
         "Allows session-b/update-1 to be observed even if session-a used the same messageId",
         "Does not claim the session change proves task completion or causation"
       ]
@@ -208,7 +209,7 @@
         "Presents Director's exact approval text and link",
         "Tells the user the structured action must be completed in Director Portal",
         "Does not send a free-form approval message or fabricate completion",
-        "Continues polling with the same seen set only after the user acts"
+        "Continues polling with the same observation log only after the user acts"
       ]
     },
     {
@@ -253,20 +254,21 @@
         "Lists published agents through GET /v2/agents using curl/jq",
         "Does not use Director snapshots for published-agent listing or invocation",
         "POSTs the creation request as free-form text with a retained bare caller UUID",
-        "Treats acceptance as acknowledgement and starts Director polling afterward with an empty seen set"
+        "Treats acceptance as acknowledgement and starts Director polling afterward with one empty append-only observation log"
       ]
     },
     {
       "id": 23,
-      "prompt": "Observe Agent Director in a background task. After 15 seconds, one snapshot contains two unseen Director messages, but task stdout is not visible to the model until the task exits.",
-      "expected_output": "The bounded poller records and emits both unseen messages as one batch, exits successfully immediately, and lets the harness present them without waiting for the observation deadline.",
+      "prompt": "Observe Agent Director in a background task. Its append-only observation log already contains one earlier tuple. After 15 seconds, one snapshot contains that tuple plus two unseen Director messages, but task stdout is not visible to the model until the task exits.",
+      "expected_output": "The observer reuses the append-only log, appends and prints the two unseen message objects as one batch, exits immediately, and lets the harness present them before another observer starts.",
       "assertions": [
         "Does not rely on incremental stdout from the still-running background task",
         "Detects unseen output using full sessionId, messageId, and text tuples",
-        "Records and emits every unseen tuple from the snapshot before exiting",
-        "Exits successfully as soon as the unseen batch is emitted instead of waiting for the bounded window to expire",
+        "Uses one append-only JSONL observation log as both transcript and seen state and never truncates it",
+        "Appends every unseen tuple and prints the actual message objects to stdout rather than only an outcome marker or file path",
+        "Exits successfully immediately after printing the unseen batch instead of waiting for the observation deadline",
         "Presents the surfaced Director messages immediately after the task exits",
-        "Starts a new 45-minute inactivity window with the same seen state only if continued observation is appropriate"
+        "Starts a new 45-minute inactivity window with the same observation log only after presenting the emitted batch and only if continued observation is appropriate"
       ]
     }
   ]
