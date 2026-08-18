@@ -8,14 +8,22 @@ This is an Airtop Agents skill for Claude Code (and other AI coding agents). The
 
 - `skills/airtop-agents/SKILL.md` — The consolidated skill definition and shared routing, authentication, and safety instructions. This subdirectory is what `npx skills add` installs — only its contents are copied to the user's project.
 - `skills/airtop-agents/.env.example` — Example env file (copied into the installed skill directory)
+- `skills/airtop-agents/scripts/director-observe` — Deterministic one-event Director message observer (installed)
 - `skills/airtop-agents/references/published-agents.md` — Published-agent invocation workflow (installed)
 - `skills/airtop-agents/references/director.md` — Agent Director text and polling workflow (installed)
 - `evals/evals.json` — 23 eval cases testing published-agent and Director behavior (not installed)
+- `tests/director-observe-test.sh` — Fixture-driven observer CLI tests (not installed)
 - `README.md` — User-facing documentation (not installed)
 - `EXAMPLES.md` — Usage examples (not installed)
 - `.env` — Local API key (not committed)
 
 ## Running Evals
+
+Run the deterministic Director observer tests directly from the repository:
+
+```bash
+tests/director-observe-test.sh
+```
 
 ### Important: Do NOT run evals from inside Claude Code
 

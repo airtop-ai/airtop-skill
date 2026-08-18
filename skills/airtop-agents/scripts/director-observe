@@ -1,0 +1,325 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly DEFAULT_TIMEOUT_SECONDS=2700
+readonly DEFAULT_POLL_SECONDS=30
+readonly DIRECTOR_MESSAGES_URL="https://api.airtop.ai/api/v1/agent-director/messages?limit=100"
+
+LOG_PATH=""
+TIMEOUT_SECONDS="$DEFAULT_TIMEOUT_SECONDS"
+POLL_SECONDS="$DEFAULT_POLL_SECONDS"
+LOCK_DIR=""
+LOCK_HELD=0
+TEMP_DIR=""
+
+usage() {
+  cat <<'EOF'
+Usage: director-observe --log PATH [--timeout-seconds N] [--poll-seconds N]
+
+Wait for the first batch of unseen Airtop Director messages. Observed messages
+are appended to PATH as JSONL. The command exits after emitting one unseen
+batch, after the inactivity timeout and a final reconciliation, or on error.
+
+Options:
+  --log PATH             Append-only JSONL observation log (required)
+  --timeout-seconds N    Inactivity window in seconds (default: 2700)
+  --poll-seconds N       Delay between snapshots in seconds (default: 30)
+  -h, --help             Show this help
+EOF
+}
+
+plain_error() {
+  printf '{"result":"error","error":"%s"}\n' "$1" >&2
+}
+
+json_error() {
+  local error_name="$1"
+  local message="$2"
+
+  jq -cn \
+    --arg error "$error_name" \
+    --arg message "$message" \
+    '{result:"error",error:$error,message:$message}' >&2
+  exit 1
+}
+
+require_positive_integer() {
+  local option_name="$1"
+  local value="$2"
+
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    plain_error "invalid_${option_name}"
+    exit 2
+  fi
+}
+
+while (($# > 0)); do
+  case "$1" in
+    --log)
+      if (($# < 2)); then
+        plain_error "missing_log_path"
+        usage >&2
+        exit 2
+      fi
+      LOG_PATH="$2"
+      shift 2
+      ;;
+    --timeout-seconds)
+      if (($# < 2)); then
+        plain_error "missing_timeout_seconds"
+        usage >&2
+        exit 2
+      fi
+      TIMEOUT_SECONDS="$2"
+      shift 2
+      ;;
+    --poll-seconds)
+      if (($# < 2)); then
+        plain_error "missing_poll_seconds"
+        usage >&2
+        exit 2
+      fi
+      POLL_SECONDS="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      plain_error "unknown_option"
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "$LOG_PATH" ]]; then
+  plain_error "missing_log_path"
+  usage >&2
+  exit 2
+fi
+
+require_positive_integer "timeout_seconds" "$TIMEOUT_SECONDS"
+require_positive_integer "poll_seconds" "$POLL_SECONDS"
+
+if ! command -v jq >/dev/null 2>&1; then
+  plain_error "jq_not_found"
+  exit 1
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+  json_error "curl_not_found" "curl is required to observe Director messages."
+fi
+
+umask 077
+
+cleanup() {
+  local status=$?
+
+  if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
+    rm -f \
+      "$TEMP_DIR/response.json" \
+      "$TEMP_DIR/candidates.json" \
+      "$TEMP_DIR/unseen.json"
+    rmdir "$TEMP_DIR" 2>/dev/null || true
+  fi
+
+  if ((LOCK_HELD == 1)); then
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+  fi
+
+  return "$status"
+}
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+LOG_PARENT=$(dirname "$LOG_PATH")
+if [[ ! -d "$LOG_PARENT" ]]; then
+  json_error "log_parent_missing" "The observation log parent directory does not exist."
+fi
+
+if [[ -L "$LOG_PATH" ]]; then
+  json_error "log_is_symlink" "Refusing to use a symbolic link as the observation log."
+fi
+
+if [[ ! -e "$LOG_PATH" ]]; then
+  if ! (umask 077 && : > "$LOG_PATH"); then
+    json_error "log_create_failed" "Could not create the observation log."
+  fi
+elif [[ ! -f "$LOG_PATH" || ! -r "$LOG_PATH" || ! -w "$LOG_PATH" ]]; then
+  json_error "log_unusable" "The observation log must be a readable, writable regular file."
+fi
+
+LOCK_DIR="${LOG_PATH}.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  json_error "observer_already_running" "Another observer may already be using this observation log."
+fi
+LOCK_HELD=1
+
+if ! jq -e -s '
+  all(.[];
+    type == "object"
+    and (.sessionId == null or (.sessionId | type) == "string")
+    and (.messageId | type) == "string"
+    and (.text | type) == "string"
+    and (.createdAt | type) == "string"
+  )
+' "$LOG_PATH" >/dev/null 2>&1; then
+  json_error "invalid_observation_log" "The observation log contains invalid JSONL records."
+fi
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SKILL_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
+API_KEY=""
+
+if [[ -f "$SKILL_DIR/.env" ]]; then
+  if ENV_LINE=$(grep -m 1 '^AIRTOP_API_KEY=' "$SKILL_DIR/.env"); then
+    API_KEY=${ENV_LINE#*=}
+    API_KEY=${API_KEY%$'\r'}
+  fi
+fi
+
+if [[ -z "$API_KEY" && -n "${AIRTOP_API_KEY:-}" ]]; then
+  API_KEY="$AIRTOP_API_KEY"
+fi
+
+if [[ -z "$API_KEY" ]]; then
+  json_error "missing_api_key" "Set AIRTOP_API_KEY or add it to the skill-local .env file."
+fi
+
+TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/airtop-director-observe.XXXXXX")
+RESPONSE_FILE="$TEMP_DIR/response.json"
+CANDIDATES_FILE="$TEMP_DIR/candidates.json"
+UNSEEN_FILE="$TEMP_DIR/unseen.json"
+RECONCILE_RESULT=""
+
+reconcile_snapshot() {
+  local curl_exit
+  local http_status
+
+  : > "$RESPONSE_FILE"
+
+  set +e
+  http_status=$(curl \
+    -sS \
+    --connect-timeout 10 \
+    --max-time 60 \
+    -o "$RESPONSE_FILE" \
+    -w '%{http_code}' \
+    -H "Authorization: Bearer ${API_KEY}" \
+    "$DIRECTOR_MESSAGES_URL" \
+    2>/dev/null)
+  curl_exit=$?
+  set -e
+
+  if ((curl_exit != 0)); then
+    RECONCILE_RESULT="retry"
+    return 0
+  fi
+
+  case "$http_status" in
+    200)
+      ;;
+    503)
+      RECONCILE_RESULT="retry"
+      return 0
+      ;;
+    401|403)
+      json_error "authentication_failed" "Director rejected the Airtop API key."
+      ;;
+    4??)
+      json_error "director_client_error" "Director returned HTTP ${http_status}."
+      ;;
+    *)
+      json_error "director_http_error" "Director returned HTTP ${http_status}."
+      ;;
+  esac
+
+  if ! jq -e '
+    type == "object"
+    and (.sessionId == null or (.sessionId | type) == "string")
+    and (.messages | type) == "array"
+    and all(.messages[];
+      type == "object"
+      and (.messageId | type) == "string"
+      and (.text | type) == "string"
+      and (.createdAt | type) == "string"
+    )
+  ' "$RESPONSE_FILE" >/dev/null 2>&1; then
+    json_error "invalid_snapshot" "Director returned an invalid message snapshot."
+  fi
+
+  jq -c '
+    .sessionId as $sessionId
+    | [.messages[]
+      | {
+          sessionId: $sessionId,
+          messageId: .messageId,
+          text: .text,
+          createdAt: .createdAt
+        }
+      ]
+  ' "$RESPONSE_FILE" > "$CANDIDATES_FILE"
+
+  jq -cn \
+    --slurpfile seen "$LOG_PATH" \
+    --slurpfile candidates "$CANDIDATES_FILE" '
+      def identity: [.sessionId, .messageId, .text] | tojson;
+      ($seen | map(identity)) as $seenIdentities
+      | reduce $candidates[0][] as $candidate
+          ([];
+            ($candidate | identity) as $candidateIdentity
+            | if (($seenIdentities + (map(identity))) | index($candidateIdentity)) != null
+              then .
+              else . + [$candidate]
+              end
+          )
+    ' > "$UNSEEN_FILE"
+
+  if (( $(jq 'length' "$UNSEEN_FILE") > 0 )); then
+    if ! jq -c '.[]' "$UNSEEN_FILE" >> "$LOG_PATH"; then
+      json_error "log_append_failed" "Could not append unseen Director messages to the observation log."
+    fi
+
+    jq -c '.' "$UNSEEN_FILE"
+    exit 0
+  fi
+
+  RECONCILE_RESULT="empty"
+}
+
+STARTED_AT=$(date +%s)
+DEADLINE=$((STARTED_AT + TIMEOUT_SECONDS))
+
+while (( $(date +%s) < DEADLINE )); do
+  reconcile_snapshot
+
+  NOW=$(date +%s)
+  REMAINING=$((DEADLINE - NOW))
+  if ((REMAINING <= 0)); then
+    break
+  fi
+
+  SLEEP_SECONDS="$POLL_SECONDS"
+  if ((SLEEP_SECONDS > REMAINING)); then
+    SLEEP_SECONDS="$REMAINING"
+  fi
+  sleep "$SLEEP_SECONDS"
+done
+
+# Reconcile once more at the inactivity deadline before reporting a timeout.
+reconcile_snapshot
+if [[ "$RECONCILE_RESULT" == "retry" ]]; then
+  json_error "final_reconciliation_failed" "The final Director snapshot could not be retrieved."
+fi
+
+FINISHED_AT=$(date +%s)
+ELAPSED_SECONDS=$((FINISHED_AT - STARTED_AT))
+jq -cn \
+  --argjson elapsedSeconds "$ELAPSED_SECONDS" \
+  '{result:"timeout",reason:"no_new_messages",elapsedSeconds:$elapsedSeconds}'

@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+output_file=""
+while (($# > 0)); do
+  case "$1" in
+    -o)
+      output_file="$2"
+      shift 2
+      ;;
+    -w|-H|--connect-timeout|--max-time)
+      shift 2
+      ;;
+    -sS)
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$output_file" ]]; then
+  exit 64
+fi
+
+call_count=0
+if [[ -f "$FAKE_CURL_STATE" ]]; then
+  call_count=$(<"$FAKE_CURL_STATE")
+fi
+call_count=$((call_count + 1))
+printf '%s\n' "$call_count" > "$FAKE_CURL_STATE"
+
+empty_snapshot() {
+  printf '%s\n' '{"sessionId":null,"messages":[]}' > "$output_file"
+  printf '200'
+}
+
+case "$FAKE_CURL_SCENARIO" in
+  first-batch)
+    printf '%s\n' '{"sessionId":"session-a","messages":[{"messageId":"update-1","text":"Working","createdAt":"2026-08-18T12:00:00Z"},{"messageId":"update-2","text":"Line one\nLine two","createdAt":"2026-08-18T12:00:01Z"}]}' > "$output_file"
+    printf '200'
+    ;;
+  changed-text)
+    printf '%s\n' '{"sessionId":"session-a","messages":[{"messageId":"approval-1","text":"Approval pending","createdAt":"2026-08-18T12:00:00Z"},{"messageId":"approval-1","text":"Approval granted","createdAt":"2026-08-18T12:01:00Z"}]}' > "$output_file"
+    printf '200'
+    ;;
+  session-change)
+    printf '%s\n' '{"sessionId":"session-b","messages":[{"messageId":"update-1","text":"Working","createdAt":"2026-08-18T12:02:00Z"}]}' > "$output_file"
+    printf '200'
+    ;;
+  retry-then-message)
+    if ((call_count <= 2)); then
+      printf '%s\n' '{"error":"temporarily unavailable"}' > "$output_file"
+      printf '503'
+    else
+      printf '%s\n' '{"sessionId":"session-a","messages":[{"messageId":"update-3","text":"Recovered","createdAt":"2026-08-18T12:03:00Z"}]}' > "$output_file"
+      printf '200'
+    fi
+    ;;
+  final-message)
+    if ((call_count == 1)); then
+      empty_snapshot
+    else
+      printf '%s\n' '{"sessionId":"session-a","messages":[{"messageId":"update-final","text":"Arrived at deadline","createdAt":"2026-08-18T12:04:00Z"}]}' > "$output_file"
+      printf '200'
+    fi
+    ;;
+  empty)
+    empty_snapshot
+    ;;
+  invalid)
+    printf '%s\n' '{"sessionId":"session-a","messages":[{"messageId":7,"text":"bad"}]}' > "$output_file"
+    printf '200'
+    ;;
+  unauthorized)
+    printf '%s\n' '{"error":"unauthorized"}' > "$output_file"
+    printf '401'
+    ;;
+  *)
+    exit 64
+    ;;
+esac

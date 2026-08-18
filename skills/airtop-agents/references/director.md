@@ -47,43 +47,34 @@ curl -sS -w '\nHTTP_STATUS:%{http_code}\n' \
 
 ### 2. View Messages
 
-One polling iteration is:
+Use the bundled observer. Replace `<skill-directory>` with the actual absolute path to the directory containing this skill, create one task-local directory for the Director conversation, and retain its log path:
 
 ```bash
-curl -sS -w '\nHTTP_STATUS:%{http_code}\n' \
-  -H "Authorization: Bearer ${API_KEY}" \
-  "https://api.airtop.ai/api/v1/agent-director/messages?limit=100"
+OBSERVATION_DIR=$(mktemp -d "${TMPDIR:-/tmp}/airtop-director.XXXXXX")
+OBSERVATION_LOG="$OBSERVATION_DIR/messages.jsonl"
+
+<skill-directory>/scripts/director-observe \
+  --log "$OBSERVATION_LOG" \
+  --timeout-seconds 2700 \
+  --poll-seconds 30
 ```
 
-- Construct an observer as a background shell operation for the current task. Run only one observer for this Director conversation at a time and keep it attached to the harness terminal.
-- Create one task-local, append-only JSONL observation log. Reuse it throughout the Director conversation and never truncate it.
-- Store one compact JSON object per observed message containing `sessionId`, `messageId`, `text`, and `createdAt`.
-- Identify output with the exact `(sessionId, messageId, text)` tuple. Changed text or the same `messageId` in another session is new output.
-- Each response ends with an `HTTP_STATUS` marker. Parse the preceding JSON only after a successful `curl` call with `HTTP_STATUS:200`.
-- Validate `sessionId` as a string or null and `messages` as an array whose items contain string `messageId`, `text`, and `createdAt` fields.
-- Poll every 30 seconds. Keep raw responses transient; do not print raw snapshots, unchanged messages, polling progress, or retryable errors into model context.
-- For every successful snapshot, append all tuples not already in the observation log. Then print the actual newly appended message objects to stdout as one compact JSON batch and exit immediately.
-- Apply the same append, stdout, and immediate-exit behavior to the first non-empty snapshot. Because the log starts empty, its entire first batch is unseen; present it as **recent Director conversation** without claiming that the submitted request caused it.
-- After the observer exits, present every emitted message before starting another observer with the same append-only log.
-- Retry HTTP 503 on the next polling interval. On 401/403 or another definitive client error, exit and report the error.
-- No active session is a successful empty response: `{"sessionId":null,"messages":[]}`.
-
-Use a 45-minute inactivity window:
-
-- If the observer emits unseen messages, present every message with its exact text and links. If Director still appears to be working, start another observer with the same observation log. This starts a fresh 45-minute inactivity window.
-- If no new Director text appears for 45 minutes, perform one final snapshot reconciliation. If that reveals new output, present it instead of requesting status.
-- If the final reconciliation is still empty, exit the observer with one compact result; do not expose its repeated snapshots to the model.
+- Run the command as the foreground process inside one harness-managed background job. Keep the job attached to the harness.
+- Run one observer per log and reuse that log throughout the conversation.
+- On unseen output, read and retain the entire emitted array. Start the next observer if appropriate, then present every message’s exact text and links in the response. Never replace the batch with a progress summary.
+- If Director requests approval, configuration, a connection, credentials, or another external action, present its exact request and link, then keep observing with the same log while waiting for the user's action.
+- The first non-empty snapshot follows the same behavior. Because the log begins empty, present that batch as **recent Director conversation** without claiming that the submitted request caused it.
+- After 45 minutes without unseen output, the script performs one final snapshot reconciliation. If still empty, it prints `{"result":"timeout","reason":"no_new_messages","elapsedSeconds":<number>}` and exits successfully.
+- On a nonzero exit, report the compact stderr error. Do not replace, repair, or truncate the observation log automatically.
 
 ### 3. Request Status After Prolonged Silence
 
-After 45 minutes without new Director text and a final empty reconciliation, send one new logical message with a fresh UUID:
+After the observer returns `result: "timeout"`, send one new logical message with a fresh UUID:
 
 > Please provide a concise status update on the request to `<specific goal or agent>`. If work is blocked on user action, state exactly what is required and include the relevant Director Portal link.
 
-- Preserve the existing observation log. The final reconciliation above is the status request's pre-POST snapshot.
-- Observe for the status response for another 10–15 minutes, using the same local filtering and immediate-exit behavior.
+- Observe for the status response with the same script and observation log, but use `--timeout-seconds 900`. Keep the 30-second polling interval.
 - Send at most one automatic status request for the original request; never create a status-of-status loop.
-- If Director requests approval, configuration, a connection, credentials, or another external action, present its exact request and link and wait for the user.
 - If Director reports completion or failure, report Director's statement without asserting stronger causal correlation than the snapshot provides.
 - If Director reports that work is continuing, tell the user and resume the normal 45-minute observation window with the same observation log.
 - If no status response appears, tell the user that both messages were accepted but no new Director output was observed, stop polling, and ask whether they want to check again.
