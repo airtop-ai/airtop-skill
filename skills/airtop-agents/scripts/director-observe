@@ -54,6 +54,7 @@ require_positive_integer() {
   fi
 }
 
+# Parse options from left to right, removing each handled argument with shift.
 while (($# > 0)); do
   case "$1" in
     --log)
@@ -121,7 +122,6 @@ cleanup() {
   if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
     rm -f \
       "$TEMP_DIR/response.json" \
-      "$TEMP_DIR/candidates.json" \
       "$TEMP_DIR/unseen.json"
     rmdir "$TEMP_DIR" 2>/dev/null || true
   fi
@@ -138,6 +138,7 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Validate the append-only log and acquire exclusive ownership before reading it.
 LOG_PARENT=$(dirname "$LOG_PATH")
 if [[ ! -d "$LOG_PARENT" ]]; then
   json_error "log_parent_missing" "The observation log parent directory does not exist."
@@ -161,6 +162,11 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
 fi
 LOCK_HELD=1
 
+TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/airtop-director-observe.XXXXXX")
+RESPONSE_FILE="$TEMP_DIR/response.json"
+UNSEEN_FILE="$TEMP_DIR/unseen.json"
+
+# Validate every existing log record before using the log for deduplication.
 if ! jq -e -s '
   all(.[];
     type == "object"
@@ -192,32 +198,24 @@ if [[ -z "$API_KEY" ]]; then
   json_error "missing_api_key" "Set AIRTOP_API_KEY or add it to the skill-local .env file."
 fi
 
-TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/airtop-director-observe.XXXXXX")
-RESPONSE_FILE="$TEMP_DIR/response.json"
-CANDIDATES_FILE="$TEMP_DIR/candidates.json"
-UNSEEN_FILE="$TEMP_DIR/unseen.json"
 RECONCILE_RESULT=""
 
+# Fetch one snapshot and write its unseen messages to UNSEEN_FILE.
+# The result is always "found", "empty", or "retry"; fatal errors exit directly.
 reconcile_snapshot() {
-  local curl_exit
   local http_status
 
   : > "$RESPONSE_FILE"
 
-  set +e
-  http_status=$(curl \
-    -sS \
-    --connect-timeout 10 \
-    --max-time 60 \
-    -o "$RESPONSE_FILE" \
-    -w '%{http_code}' \
-    -H "Authorization: Bearer ${API_KEY}" \
-    "$DIRECTOR_MESSAGES_URL" \
-    2>/dev/null)
-  curl_exit=$?
-  set -e
-
-  if ((curl_exit != 0)); then
+  if ! http_status=$(curl \
+      -sS \
+      --connect-timeout 10 \
+      --max-time 60 \
+      -o "$RESPONSE_FILE" \
+      -w '%{http_code}' \
+      -H "Authorization: Bearer ${API_KEY}" \
+      "$DIRECTOR_MESSAGES_URL" \
+      2>/dev/null); then
     RECONCILE_RESULT="retry"
     return 0
   fi
@@ -240,69 +238,98 @@ reconcile_snapshot() {
       ;;
   esac
 
-  if ! jq -e '
-    type == "object"
-    and (.sessionId == null or (.sessionId | type) == "string")
-    and (.messages | type) == "array"
-    and all(.messages[];
+  # Validate, normalize, and deduplicate in one pass. The keyed `seen` map starts
+  # with log identities and grows during the reduce, so snapshot duplicates emit once.
+  if ! jq -ce --slurpfile seen "$LOG_PATH" '
+    def valid_message:
       type == "object"
       and (.messageId | type) == "string"
       and (.text | type) == "string"
-      and (.createdAt | type) == "string"
-    )
-  ' "$RESPONSE_FILE" >/dev/null 2>&1; then
+      and (.createdAt | type) == "string";
+    def valid_snapshot:
+      type == "object"
+      and (.sessionId == null or (.sessionId | type) == "string")
+      and (.messages | type) == "array"
+      and all(.messages[]; valid_message);
+    def identity: [.sessionId, .messageId, .text] | tojson;
+
+    if valid_snapshot then
+      # createdAt is intentionally excluded from message identity.
+      (reduce $seen[] as $message
+        ({}; .[($message | identity)] = true)) as $seenIdentities
+      | .sessionId as $sessionId
+      | reduce .messages[] as $message (
+          {seen: $seenIdentities, unseen: []};
+          {
+            sessionId: $sessionId,
+            messageId: $message.messageId,
+            text: $message.text,
+            createdAt: $message.createdAt
+          } as $candidate
+          | ($candidate | identity) as $candidateIdentity
+          | if .seen[$candidateIdentity]
+            then .
+            else .seen[$candidateIdentity] = true
+              | .unseen += [$candidate]
+            end
+        )
+      | .unseen
+    else
+      error("invalid snapshot")
+    end
+  ' "$RESPONSE_FILE" > "$UNSEEN_FILE" 2>/dev/null; then
     json_error "invalid_snapshot" "Director returned an invalid message snapshot."
   fi
 
-  jq -c '
-    .sessionId as $sessionId
-    | [.messages[]
-      | {
-          sessionId: $sessionId,
-          messageId: .messageId,
-          text: .text,
-          createdAt: .createdAt
-        }
-      ]
-  ' "$RESPONSE_FILE" > "$CANDIDATES_FILE"
-
-  jq -cn \
-    --slurpfile seen "$LOG_PATH" \
-    --slurpfile candidates "$CANDIDATES_FILE" '
-      def identity: [.sessionId, .messageId, .text] | tojson;
-      ($seen | map(identity)) as $seenIdentities
-      | reduce $candidates[0][] as $candidate
-          ([];
-            ($candidate | identity) as $candidateIdentity
-            | if (($seenIdentities + (map(identity))) | index($candidateIdentity)) != null
-              then .
-              else . + [$candidate]
-              end
-          )
-    ' > "$UNSEEN_FILE"
-
-  if (( $(jq 'length' "$UNSEEN_FILE") > 0 )); then
-    if ! jq -c '.[]' "$UNSEEN_FILE" >> "$LOG_PATH"; then
-      json_error "log_append_failed" "Could not append unseen Director messages to the observation log."
-    fi
-
-    jq -c '.' "$UNSEEN_FILE"
-    exit 0
+  if jq -e 'length > 0' "$UNSEEN_FILE" >/dev/null; then
+    RECONCILE_RESULT="found"
+  else
+    RECONCILE_RESULT="empty"
   fi
-
-  RECONCILE_RESULT="empty"
 }
 
 STARTED_AT=$(date +%s)
 DEADLINE=$((STARTED_AT + TIMEOUT_SECONDS))
+FINAL_RECONCILIATION=0
 
-while (( $(date +%s) < DEADLINE )); do
+# Poll normally until the deadline, then perform exactly one final reconciliation.
+while :; do
   reconcile_snapshot
+
+  case "$RECONCILE_RESULT" in
+    found)
+      if ! jq -c '.[]' "$UNSEEN_FILE" >> "$LOG_PATH"; then
+        json_error "log_append_failed" "Could not append unseen Director messages to the observation log."
+      fi
+      jq -c '.' "$UNSEEN_FILE"
+      # New messages were persisted and emitted; observation is complete.
+      exit 0
+      ;;
+    retry)
+      if ((FINAL_RECONCILIATION == 1)); then
+        # The deadline's final fetch failed, so there is no remaining retry.
+        json_error "final_reconciliation_failed" "The final Director snapshot could not be retrieved."
+      fi
+      ;;
+    empty)
+      ;;
+    *)
+      # Every reconciliation must produce one of the three states above.
+      json_error "internal_error" "The observer reached an unknown reconciliation state."
+      ;;
+  esac
+
+  if ((FINAL_RECONCILIATION == 1)); then
+    # The final snapshot was empty; leave the loop and report the timeout.
+    break
+  fi
 
   NOW=$(date +%s)
   REMAINING=$((DEADLINE - NOW))
   if ((REMAINING <= 0)); then
-    break
+    # Mark the next iteration as final instead of reporting a timeout immediately.
+    FINAL_RECONCILIATION=1
+    continue
   fi
 
   SLEEP_SECONDS="$POLL_SECONDS"
@@ -310,13 +337,11 @@ while (( $(date +%s) < DEADLINE )); do
     SLEEP_SECONDS="$REMAINING"
   fi
   sleep "$SLEEP_SECONDS"
-done
 
-# Reconcile once more at the inactivity deadline before reporting a timeout.
-reconcile_snapshot
-if [[ "$RECONCILE_RESULT" == "retry" ]]; then
-  json_error "final_reconciliation_failed" "The final Director snapshot could not be retrieved."
-fi
+  if (( $(date +%s) >= DEADLINE )); then
+    FINAL_RECONCILIATION=1
+  fi
+done
 
 FINISHED_AT=$(date +%s)
 ELAPSED_SECONDS=$((FINISHED_AT - STARTED_AT))

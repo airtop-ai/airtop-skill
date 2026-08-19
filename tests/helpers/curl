@@ -42,6 +42,10 @@ case "$FAKE_CURL_SCENARIO" in
     printf '%s\n' '{"sessionId":"session-a","messages":[{"messageId":"update-1","text":"Working","createdAt":"2026-08-18T12:00:00Z"},{"messageId":"update-2","text":"Line one\nLine two","createdAt":"2026-08-18T12:00:01Z"}]}' > "$output_file"
     printf '200'
     ;;
+  duplicate-batch)
+    printf '%s\n' '{"sessionId":"session-a","messages":[{"messageId":"update-1","text":"Working","createdAt":"2026-08-18T12:00:00Z"},{"messageId":"update-1","text":"Working","createdAt":"2026-08-18T12:00:01Z"}]}' > "$output_file"
+    printf '200'
+    ;;
   changed-text)
     printf '%s\n' '{"sessionId":"session-a","messages":[{"messageId":"approval-1","text":"Approval pending","createdAt":"2026-08-18T12:00:00Z"},{"messageId":"approval-1","text":"Approval granted","createdAt":"2026-08-18T12:01:00Z"}]}' > "$output_file"
     printf '200'
@@ -58,6 +62,10 @@ case "$FAKE_CURL_SCENARIO" in
       printf '%s\n' '{"sessionId":"session-a","messages":[{"messageId":"update-3","text":"Recovered","createdAt":"2026-08-18T12:03:00Z"}]}' > "$output_file"
       printf '200'
     fi
+    ;;
+  unavailable)
+    printf '%s\n' '{"error":"temporarily unavailable"}' > "$output_file"
+    printf '503'
     ;;
   final-message)
     if ((call_count == 1)); then

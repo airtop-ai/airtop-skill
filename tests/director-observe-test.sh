@@ -51,6 +51,12 @@ jq -e -s 'length == 2' "$case_dir/messages.jsonl" >/dev/null || fail "first snap
 [[ ! -s "$case_dir/stderr" ]] || fail "first snapshot keeps stderr quiet"
 pass "first snapshot appends and emits one compact batch"
 
+case_dir=$(new_case_dir "duplicate-batch")
+output=$(run_observer "duplicate-batch" "$case_dir/calls" --log "$case_dir/messages.jsonl" --timeout-seconds 2 --poll-seconds 1)
+jq -e 'length == 1 and .[0].messageId == "update-1"' <<<"$output" >/dev/null || fail "duplicate snapshot entries are emitted once"
+jq -e -s 'length == 1' "$case_dir/messages.jsonl" >/dev/null || fail "duplicate snapshot entries are appended once"
+pass "duplicate identities within one snapshot are deduplicated"
+
 case_dir=$(new_case_dir "changed-text")
 printf '%s\n' '{"sessionId":"session-a","messageId":"approval-1","text":"Approval pending","createdAt":"2026-08-18T12:00:00Z"}' > "$case_dir/messages.jsonl"
 output=$(run_observer "changed-text" "$case_dir/calls" --log "$case_dir/messages.jsonl" --timeout-seconds 2 --poll-seconds 1)
@@ -70,6 +76,14 @@ jq -e 'length == 1 and .[0].text == "Recovered"' <<<"$output" >/dev/null || fail
 [[ $(<"$case_dir/calls") == "3" ]] || fail "observer retries HTTP 503"
 [[ ! -s "$case_dir/stderr" ]] || fail "retryable errors remain silent"
 pass "HTTP 503 responses retry without entering model output"
+
+case_dir=$(new_case_dir "final-retry")
+if run_observer "unavailable" "$case_dir/calls" --log "$case_dir/messages.jsonl" --timeout-seconds 1 --poll-seconds 1 >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+  fail "a failed final reconciliation must fail"
+fi
+jq -e '.error == "final_reconciliation_failed"' "$case_dir/stderr" >/dev/null || fail "final retry error is structured"
+[[ $(<"$case_dir/calls") == "2" ]] || fail "retryable snapshots stop after the final reconciliation"
+pass "a retryable final snapshot reports a reconciliation failure"
 
 case_dir=$(new_case_dir "timeout")
 output=$(run_observer "empty" "$case_dir/calls" --log "$case_dir/messages.jsonl" --timeout-seconds 1 --poll-seconds 1)
